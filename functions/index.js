@@ -49,7 +49,7 @@ function singlepermitFunction (conv, {short_address}) {
     .catch(
       conv.close(`It didn't work for ${short_address}`)
     )
-};
+}
 
 // Array to define day of the week
 let weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -57,7 +57,7 @@ let weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
 // Fetch the trash API
 app.intent('trash', (conv, {short_address, trash_type}) => {
   // API url for trash address
-  const trashurl = 'https://apis.detroitmi.gov/waste_notifier/address/' + encodeURIComponent(short_address) + '/'
+  const trashurl = 'https://apis.detroitmi.gov/waste_notifier/address/' + encodeURIComponent(short_address) + '/?format=json'
 
   // fetch the url
   fetch(trashurl)
@@ -95,7 +95,7 @@ app.intent('trash', (conv, {short_address, trash_type}) => {
       return day
     })
     // Print something if the above doesn't work
-    .catch(conv.close(`I'm not sure`));
+    .catch(conv.close(`I'm not sure ${short_address}`));
 })
 
 // Set the DialogflowApp object to handle the HTTPS POST request.
