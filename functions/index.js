@@ -2,101 +2,131 @@
 // for Dialogflow fulfillment library docs, samples, and to report issues
 'use strict';
 
-// Import the Dialogflow module from the Actions on Google client library.
-const {dialogflow} = require('actions-on-google');
+const functions = require('firebase-functions');
+const { WebhookClient } = require('dialogflow-fulfillment');
+const { Card, Suggestion } = require('dialogflow-fulfillment');
 
-// Import the fetch module
 const fetch = require('node-fetch');
 
-// Import the firebase-functions package for deployment.
-const functions = require('firebase-functions');
+process.env.DEBUG = 'dialogflow:debug'; // enables lib debugging statements
 
-// Instantiate the Dialogflow client.
-const app = dialogflow({debug: true});
+exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, response) => {
+  const agent = new WebhookClient({ request, response });
+  console.log('Dialogflow Request headers: ' + JSON.stringify(request.headers));
+  console.log('Dialogflow Request body: ' + JSON.stringify(request.body));
 
-// Default welcome agent
-app.intent('DefaultWelcomeIntent', (conv) => {
-  conv.add(`Welcome to my agent!`);
-})
+  function welcome(agent) {
+    agent.add(`Welcome to my agent!`);
+  }
 
-// Default fallback agent
-app.intent('DefaultFallbackIntent', (conv) => {
-  conv.add(`I didn't understand. `);
-  conv.add(`I'm sorry, can you try again?`);
-})
+  function fallback(agent) {
+    agent.add(`I didn't understand`);
+    agent.add(`I'm sorry, can you try again?`);
+  }
 
-// Fetch the permits API
-app.intent('permits.single', singlepermitFunction);
+  function permitsSingle(agent){
+    const params = request.body.queryResult.parameters;
+    const address = params["short_address"];
 
-function singlepermitFunction (conv, {short_address}) {
-  // API url for permits at a single address
-  const permitsurl = `https://data.detroitmi.gov/resource/but4-ky7y.json?$q=` + encodeURIComponent(short_address);
-  // fetch the url
-  fetch(permitsurl)
-    .then (response => {response.json()})
-    .then(data => {
-      // Return the number of permits at the address and ask the user how to procede
-      if (data.length === 1) {
-        conv.add(`There is 1 permit for ${short_address}.`)
-        conv.add(` Would you like more details about that permit?`)
-      }
-      else {
-        conv.add(`There are ${data.length} permits for ${short_address}.`)
-        conv.add(`Would you like more details about these permits?`)
-      }
+    const gqlEndpoint = `https://detroit-opendata.ngrok.io/graphql`
+    const gqlQuery = `{
+          geocodeAddress(address: "${address}") {
+            edges {
+              node {
+                parcelno
+                address
+                wkbGeometry
+                permitsByParcelno {
+                  totalCount
+                  edges {
+                    node {
+                      permitNo
+                      bldPermitType
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`;
+
+    return fetch(gqlEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/graphql' },
+      body: gqlQuery,
     })
-    // print something if the above doesn't work
-    .catch(
-      conv.close(`It didn't work for ${short_address}`)
-    )
-}
+      .then(res => res.json())
+      .then(data => {
 
-// Array to define day of the week
-let weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+        let total = data.data.geocodeAddress.edges.map(e =>
+          e.node.permitsByParcelno.totalCount
+        )
 
-// Fetch the trash API
-app.intent('trash', (conv, {short_address, trash_type}) => {
-  // API url for trash address
-  const trashurl = 'https://apis.detroitmi.gov/waste_notifier/address/' + encodeURIComponent(short_address) + '/?format=json'
+        if (total[0] === 0) {
+          return agent.add("This property does not currently have any building permits.")
+        } else if (total[0] > 4) {
+          return agent.ask(`This property has ${total} permits. There are too many to list, would you like this information texted or emailed to you?`)
+        } else {
 
-  // fetch the url
-  fetch(trashurl)
-    .then(response => {return response.json()})
-    .then(data => {
-      // Return the date for each type of trash
-      if (trash_type === 'trash'){
-        let date = new Date(data.next_pickups.trash.date)
+          const nodes = data.data.geocodeAddress.edges;
+
+          let permitResponses = ""
+          for (let node of nodes) {
+            for (let newNode of node.node.permitsByParcelno.edges) {
+              permitResponses += `Number: ${newNode.node.permitNo}, Type: ${newNode.node.bldPermitType}.`
+            }
+          }
+          agent.add(`This property has ${total} permits. They are as follows:`)
+          return agent.add(permitResponses)
+        }
+
       }
-      else if (trash_type === 'bulk'){
-        let date = new Date(data.next_pickups.bulk.date)
-      }
-      else if (trash_type === 'yard waste'){
-        let date = new Date(data.next_pickups['yard waste'].date)
-      }
-      else if (trash_type === 'recycling'){
-        let date = new Date(data.next_pickups.recycling.date)
-      }
-      // Not sure what to do with this else statement
-      else
-        {return null}
 
-      // Turn date into day of the week
-      let day = weekday[date.getDay()]
+      )
+      .catch(e => console.log(e));
+  }
 
-      // return day
-      return day
-    })
-    .then(day => {
-      // Use day to create response
-      conv.add(`${trash_type} pickup is on ${day}.`)
-      conv.add(` Would you like to sign up for reminders?`)
+  function trash(agent){
+    const params = request.body.queryResult.parameters;
+    const address = params["short_address"];
+    const trash_type = params["trash_type"];
+    const trashurl = 'https://apis.detroitmi.gov/waste_notifier/address/' + encodeURIComponent(address) + '/?format=json'
+    return fetch(trashurl)
+      .then(response => response.json())
+      .then(data => {
+        // // Return the date for each type of trash
+        let date;
+        if (trash_type === 'trash') {
+          date = new Date(data.next_pickups.trash.date)
+        }
+        else if (trash_type === 'bulk') {
+          date = new Date(data.next_pickups.bulk.date)
+        }
+        else if (trash_type === 'yard waste') {
+          date = new Date(data.next_pickups['yard waste'].date)
+        }
+        else if (trash_type === 'recycling') {
+          date = new Date(data.next_pickups.recycling.date)
+        }
 
-      // then statment has to have a return
-      return day
-    })
-    // Print something if the above doesn't work
-    .catch(conv.close(`I'm not sure ${short_address}`));
-})
+        const options = { weekday: 'long' };
+        let day = date.toLocaleDateString("en-GB", options)
 
-// Set the DialogflowApp object to handle the HTTPS POST request.
-exports.dialogflowFirebaseFulfillment = functions.https.onRequest(app);
+        console.log(data)
+        return agent.add(`Your next ${trash_type} pickup is ${day}.`)
+
+      }).catch(err => {
+        agent.add(`Sorry we're taking a little loner on our side than expected. Please try again soon.`)
+        return err
+      });
+  }
+
+  let intentMap = new Map();
+  intentMap.set('Default Welcome Intent', welcome);
+  intentMap.set('Default Fallback Intent', fallback);
+  intentMap.set('trash', trash);
+  intentMap.set('permits.single', permitsSingle);
+  // intentMap.set('your intent name here', yourFunctionHandler);
+  // intentMap.set('your intent name here', googleAssistantHandler);
+  agent.handleRequest(intentMap);
+});
