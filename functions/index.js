@@ -24,6 +24,34 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
     agent.add(`I'm sorry, can you try again?`);
   }
 
+  function trash(agent) {
+    const params = request.body.queryResult.parameters;
+    const address = params["short_address"];
+    const trash_type = params["trash_type"];
+    const trashurl = 'https://apis.detroitmi.gov/waste_notifier/address/' + encodeURIComponent(address) + '/?format=json'
+    return fetch(trashurl)
+      .then(response => response.json())
+      .then(data => {
+        // // Return the date for each type of trash
+        const date = new Date(data.next_pickups[trash_type].date)
+        const todays_date = new Date().getDate()
+        const options = { weekday: 'long' };
+        const day = date.toLocaleDateString("en-GB", options)
+
+        // TODO: Check if hours are past 10 and tell the "Next xDay"
+        if (date.getDate() === todays_date) {
+          return agent.add(`Your next ${trash_type} pickup is today.`)
+        } else {
+          return agent.add(`Your next ${trash_type} pickup is ${day}.`)
+        }
+
+      }).catch(err => {
+        agent.add(`Sorry we're taking a little longer on our side than expected. Please try again soon.`)
+        console.log("Error:", err)
+        return err
+      });
+  }
+
   function permitsSingle(agent){
     const params = request.body.queryResult.parameters;
     const address = params["short_address"];
@@ -86,47 +114,10 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
       .catch(e => console.log(e));
   }
 
-  function trash(agent){
-    const params = request.body.queryResult.parameters;
-    const address = params["short_address"];
-    const trash_type = params["trash_type"];
-    const trashurl = 'https://apis.detroitmi.gov/waste_notifier/address/' + encodeURIComponent(address) + '/?format=json'
-    return fetch(trashurl)
-      .then(response => response.json())
-      .then(data => {
-        // // Return the date for each type of trash
-        let date;
-        if (trash_type === 'trash') {
-          date = new Date(data.next_pickups.trash.date)
-        }
-        else if (trash_type === 'bulk') {
-          date = new Date(data.next_pickups.bulk.date)
-        }
-        else if (trash_type === 'yard waste') {
-          date = new Date(data.next_pickups['yard waste'].date)
-        }
-        else if (trash_type === 'recycling') {
-          date = new Date(data.next_pickups.recycling.date)
-        }
-
-        const options = { weekday: 'long' };
-        let day = date.toLocaleDateString("en-GB", options)
-
-        console.log(data)
-        return agent.add(`Your next ${trash_type} pickup is ${day}.`)
-
-      }).catch(err => {
-        agent.add(`Sorry we're taking a little loner on our side than expected. Please try again soon.`)
-        return err
-      });
-  }
-
   let intentMap = new Map();
   intentMap.set('Default Welcome Intent', welcome);
   intentMap.set('Default Fallback Intent', fallback);
   intentMap.set('trash', trash);
   intentMap.set('permits.single', permitsSingle);
-  // intentMap.set('your intent name here', yourFunctionHandler);
-  // intentMap.set('your intent name here', googleAssistantHandler);
   agent.handleRequest(intentMap);
 });
