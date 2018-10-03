@@ -52,6 +52,11 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
       });
   }
 
+  function permitsDetails(agent){
+    const propertyContext = agent.getContext('permitstosend').parameters.permits;
+    return agent.add(`So there were ${propertyContext.totalCount} permits in your last request.`)
+  }
+
   function permitsSingle(agent){
     const params = request.body.queryResult.parameters;
     const address = params["short_address"];
@@ -85,7 +90,7 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
     })
       .then(res => res.json())
       .then(data => {
-
+        console.log("permit Data", data);
         let total = data.data.geocodeAddress.edges.map(e =>
           e.node.permitsByParcelno.totalCount
         )
@@ -93,7 +98,13 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
         if (total[0] === 0) {
           return agent.add("This property does not currently have any building permits.")
         } else if (total[0] > 4) {
-          return agent.ask(`This property has ${total} permits. There are too many to list, would you like this information texted or emailed to you?`)
+          agent.setContext({
+            name: 'permitstosend',
+            lifespan: 2,
+            parameters: { permits: data.data.geocodeAddress.edges[0].node.permitsByParcelno }
+          })
+          agent.add(`This property has ${total} permits. There are too many to list, would you like this information texted or emailed to you?`)
+          return agent.add(new Suggestion("Yes"))
         } else {
 
           const nodes = data.data.geocodeAddress.edges;
@@ -119,5 +130,6 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
   intentMap.set('Default Fallback Intent', fallback);
   intentMap.set('trash', trash);
   intentMap.set('permits.single', permitsSingle);
+  intentMap.set('permits.single - yes', permitsDetails);
   agent.handleRequest(intentMap);
 });
