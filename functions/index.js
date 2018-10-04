@@ -5,10 +5,85 @@
 const functions = require('firebase-functions');
 const { WebhookClient } = require('dialogflow-fulfillment');
 const { Card, Suggestion } = require('dialogflow-fulfillment');
+const admin = require('firebase-admin');
 
+// Networking
 const fetch = require('node-fetch');
 
-process.env.DEBUG = 'dialogflow:debug'; // enables lib debugging statements
+// Setup firestore connections
+admin.initializeApp(functions.config().firebase);
+var db = admin.firestore();
+
+// enables lib debugging statements
+process.env.DEBUG = 'dialogflow:debug'; 
+
+const checkUserStatus = () => {
+  /* Check if the current session 
+     user already has any saved details 
+     on the system 
+  */
+}
+
+const checkIntentSource = (request) => {
+  // Requests from dialog flow web interface do not come with a intent source
+  // At some point we should return the entire user payload for storage
+  const source = request.body.originalDetectIntentRequest.source || "debug"
+  let userId;
+  if (source === "twilio") {
+    userId = request.body.originalDetectIntentRequest.payload.data.From
+  } else if (source === "google") {
+    userId = request.body.originalDetectIntentRequest.payload.user.userId
+  }else{
+    console.log("Debug user")
+    userId = "6435"
+  }
+  return { source, userId}
+}
+
+// If there is a user, checkUserExistance payload contains the user data for use
+// Or false if no user is found
+// Returns the entire promise so you can access the data for other intents
+const checkUserExistance = (request) => {
+  const user = checkIntentSource(request);
+  var userRef = db.collection('users').doc(`${user.userId}`);
+  var getDoc = userRef.get()
+    .then(doc => {
+      if (!doc.exists) {
+        console.log('No such document!');
+        return false
+      } else {
+        console.log('Document data:', doc.data());
+        return doc.data()
+      }
+    })
+    .catch(err => {
+      console.log('Error getting document', err);
+      return false
+    });
+  return getDoc
+}
+
+const createNewUser = (request) => {
+  const newUser = checkIntentSource(request)
+  console.log("User details:", newUser)
+  var docRef = db.collection('users').doc(`${newUser.userId}`);
+  var setUser = docRef.set({
+    userId: newUser.userId
+  });
+  /* Save a new record for the user
+     either a phone number or google assistant code
+  */
+}
+
+const getUserDetails = (userId) => {
+  // Return the user details for use in an intent
+  // This is actually covered with checkUserExistance but you may want to do it directly
+  // We may also want to maintain single responsibility
+}
+
+const updateUserDetails = (userId, details) => {
+  // Write items to the user file such as phone and email 
+}
 
 exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, response) => {
   const agent = new WebhookClient({ request, response });
@@ -57,7 +132,12 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
     return agent.add(`So there were ${propertyContext.totalCount} permits in your last request.`)
   }
 
+  
+
   function permitsSingle(agent){
+    //createNewUser(request)
+    checkUserExistance(request).then(response => console.log("From the promise:",response)).catch(err => console.log(err))
+    
     const params = request.body.queryResult.parameters;
     const address = params["short_address"];
 
