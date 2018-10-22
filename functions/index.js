@@ -15,12 +15,12 @@ admin.initializeApp(functions.config().firebase);
 var db = admin.firestore();
 
 // enables lib debugging statements
-process.env.DEBUG = 'dialogflow:debug'; 
+process.env.DEBUG = 'dialogflow:debug';
 
 const checkUserStatus = () => {
-  /* Check if the current session 
-     user already has any saved details 
-     on the system 
+  /* Check if the current session
+     user already has any saved details
+     on the system
   */
 }
 
@@ -82,7 +82,7 @@ const getUserDetails = (userId) => {
 }
 
 const updateUserDetails = (userId, details) => {
-  // Write items to the user file such as phone and email 
+  // Write items to the user file such as phone and email
 }
 
 exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, response) => {
@@ -90,20 +90,28 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
   console.log('Dialogflow Request headers: ' + JSON.stringify(request.headers));
   console.log('Dialogflow Request body: ' + JSON.stringify(request.body));
 
+  // Default welcome agent
   function welcome(agent) {
     agent.add(`Welcome to my agent!`);
   }
 
+  // Default fallback agent
   function fallback(agent) {
     agent.add(`I didn't understand`);
     agent.add(`I'm sorry, can you try again?`);
   }
 
+  // Fulfillment for trash intent
   function trash(agent) {
+    // set variable for entities
     const params = request.body.queryResult.parameters;
     const address = params["short_address"];
     const trash_type = params["trash_type"];
+
+    // API url for trash address
     const trashurl = 'https://apis.detroitmi.gov/waste_notifier/address/' + encodeURIComponent(address) + '/?format=json'
+
+    // fetch the trash api
     return fetch(trashurl)
       .then(response => response.json())
       .then(data => {
@@ -115,62 +123,92 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
 
         // TODO: Check if hours are past 10 and tell the "Next xDay"
         if (date.getDate() === todays_date) {
-          return agent.add(`Your next ${trash_type} pickup is today.`)
+          return agent.add(`Your next ${trash_type} pickup is today. Would you like to sign up for reminders?`)
         } else {
-          return agent.add(`Your next ${trash_type} pickup is ${day}.`)
+          return agent.add(`Your next ${trash_type} pickup is ${day}. Would you like to sign up for reminders?`)
         }
 
       }).catch(err => {
+        // Print something if the above doesn't work
         agent.add(`Sorry we're taking a little longer on our side than expected. Please try again soon.`)
         console.log("Error:", err)
         return err
       });
   }
 
-  function permitsDetails(agent){
-    const propertyContext = agent.getContext('permitstosend').parameters.permits;
-    return agent.add(`So there were ${propertyContext.totalCount} permits in your last request.`)
+  function trashSubscribe(agent){
+    const params = request.body.queryResult.parameters;
+    const contexts = request.body.queryResult.outputContexts;
+    const phone = params['phone-number'];
+    const subscribeNumber = '313-800-7905';
+    const propertyAddress = contexts[1].parameters['short_address'];
+    const trashSubscribeUrl = 'https://apis.detroitmi.gov/waste_notifier/subscribe/'
+    const subscribeData = { "phone_number": phone, "address": propertyAddress }
+    return fetch(trashSubscribeUrl, {
+      method: 'POST',
+      body: JSON.stringify(subscribeData),
+      headers: {
+        'Content-Type': 'application/json'
+        }
+      }
+    )
+    .then(res => res.json())
+    .then(data => {
+      console.log('Success:', JSON.stringify(data));
+      return agent.add(`Your number ${phone} has been subscribed to waste pickup reminders for ${propertyAddress}.`);
+    })
+    .catch(err => {
+      console.error('Error:', err);
+      return agent.add(`Oops, something went wrong.`);
+    });
   }
 
-  
+  function permitsDetails(agent){
+    const propertyContext = agent.getContext('permitstosend').parameters.permits;
+    return agent.add(`There were ${propertyContext.totalCount} permits in your last request.`)
+  }
 
+  // Fulfillment for single permit intent
   function permitsSingle(agent){
     //createNewUser(request)
     checkUserExistance(request).then(response => console.log("From the promise:",response)).catch(err => console.log(err))
-    
-    const params = request.body.queryResult.parameters;
-    const address = params["short_address"];
 
-    const gqlEndpoint = `https://detroit-opendata.ngrok.io/graphql`
-    const gqlQuery = `{
-          geocodeAddress(address: "${address}") {
-            edges {
-              node {
-                parcelno
-                address
-                wkbGeometry
-                permitsByParcelno {
-                  totalCount
-                  edges {
-                    node {
-                      permitNo
-                      bldPermitType
+      // set variable for entities
+      const params = request.body.queryResult.parameters;
+      const address = params["short_address"];
+
+      // set the endpoint and query for graphql
+      const gqlEndpoint = `https://detroit-opendata.ngrok.io/graphql`
+      const gqlQuery = `{
+            geocodeAddress(address: "${address}") {
+              edges {
+                node {
+                  parcelno
+                  address
+                  wkbGeometry
+                  permitsByParcelno {
+                    totalCount
+                    edges {
+                      node {
+                        permitNo
+                        bldPermitType
+                      }
                     }
                   }
                 }
               }
             }
-          }
-        }`;
+          }`;
 
-    return fetch(gqlEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/graphql' },
-      body: gqlQuery,
-    })
-      .then(res => res.json())
-      .then(data => {
-        console.log("permit Data", data);
+      // fetch graphql endopoint
+      return fetch(gqlEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/graphql' },
+        body: gqlQuery,
+      })
+        .then(res => res.json())
+        .then(data => {
+          console.log("permit Data", data);
         let total = data.data.geocodeAddress.edges.map(e =>
           e.node.permitsByParcelno.totalCount
         )
@@ -202,14 +240,75 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request, resp
       }
 
       )
-      .catch(e => console.log(e));
-  }
+        .catch(e => console.log(e));
+    }
 
-  let intentMap = new Map();
-  intentMap.set('Default Welcome Intent', welcome);
-  intentMap.set('Default Fallback Intent', fallback);
-  intentMap.set('trash', trash);
-  intentMap.set('permits.single', permitsSingle);
-  intentMap.set('permits.single - yes', permitsDetails);
-  agent.handleRequest(intentMap);
-});
+    // Function for demolition intent
+    function demolitionSingle(agent) {
+      // set variable for entities
+      const params = request.body.queryResult.parameters;
+      const address = params["short_address"];
+
+      // set graphql endpoint
+      const gqlEndpoint = `https://detroit-opendata.ngrok.io/graphql`
+      const gqlQuery = `{
+            geocodeAddress(address: "${address}") {
+              edges {
+                node {
+                  parcelno
+                  address
+                  wkbGeometry
+                  demosByParcelno {
+                    edges {
+                      node {
+                        demolitionDate
+                        status
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`;
+
+      const today = new Date();
+      var todaysDate = today.getFullYear()+'-'+(today.getMonth()+1)+'-'+today.getDate();
+
+      // fetch demolitions
+      return fetch(gqlEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/graphql' },
+        body: gqlQuery
+      })
+      .then(res => res.json())
+      .then(data => {
+          let demoPlanned = data.data.geocodeAddress.edges[0]
+          if (!demoPlanned){
+            return agent.add(`${address} is not currently slated for demolition.`)
+          }
+          let demoDate = data.data.geocodeAddress.edges[0].node.demosByParcelno.edges[0].node.demolitionDate.split('T')[0];
+          let demoStatus = data.data.geocodeAddress.edges[0].node.demosByParcelno.edges[0].node.status;
+
+          if (demoStatus === "Completed") {
+            return agent.add(`${address} was demolished on ${demoDate}.`)
+          }
+          else if (!demoDate) {
+            return agent.add(`${address} is planned to be demolished within the next year.`);
+          }
+          else {
+            return agent.add(`${address} is scheduled to be demolished on ${demoDate}. If you live nearby, help protect your family during the demolition by closing windows and doors and keeping children and pets inside. visit detroit m i .gov/leadsafe to learn more.`)
+          }
+      })
+      .catch(e => console.log(e));
+    }
+
+    let intentMap = new Map();
+    intentMap.set('Default Welcome Intent', welcome);
+    intentMap.set('Default Fallback Intent', fallback);
+    intentMap.set('trash', trash);
+    intentMap.set('trash.signup.inputphone', trashSubscribe)
+    intentMap.set('permits.single', permitsSingle);
+    intentMap.set('permits.single - yes', permitsDetails);
+    intentMap.set('demolitions.single', demolitionSingle);
+    agent.handleRequest(intentMap);
+  });
